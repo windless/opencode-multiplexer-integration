@@ -23,7 +23,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/alvinunreal/opencode-multiplexer-integration"
+    "url": "https://github.com/windless/opencode-multiplexer-integration"
   },
   "files": [
     "dist",
