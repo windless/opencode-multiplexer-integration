@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 // Multiplexer type options
-export const MultiplexerTypeSchema = z.enum(['auto', 'tmux', 'zellij', 'none']);
+export const MultiplexerTypeSchema = z.enum(['auto', 'tmux', 'zellij', 'cmux', 'none']);
 export type MultiplexerType = z.infer<typeof MultiplexerTypeSchema>;
 
 // Layout options (shared across multiplexers)
