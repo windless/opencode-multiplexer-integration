@@ -113,7 +113,7 @@ describe('CmuxMultiplexer — spawnPane', () => {
     });
   });
 
-  test('creates pane with correct command args', async () => {
+  test('creates pane then sends command via send', async () => {
     const { CmuxMultiplexer } = await importFreshCmux();
     const cmux = new CmuxMultiplexer('main-vertical', 60);
     await cmux.isAvailable(); // warm binary cache
@@ -128,16 +128,27 @@ describe('CmuxMultiplexer — spawnPane', () => {
     expect(result.success).toBe(true);
     expect(result.paneId).toBe('surface:5');
 
+    // Step 1: new-pane creates pane without command
     const newPaneCalls = commands().filter((c) => c[1] === 'new-pane');
     expect(newPaneCalls).toHaveLength(1);
-    const args = newPaneCalls[0];
-    expect(args).toContain('--direction');
-    expect(args).toContain('right');
-    expect(args).toContain('--json');
-    const attachCmd = args[args.length - 1];
-    expect(attachCmd).toContain('opencode attach');
-    expect(attachCmd).toContain('session-abc');
-    expect(attachCmd).toContain('http://localhost:4096');
+    const newPaneArgs = newPaneCalls[0];
+    expect(newPaneArgs).toContain('--direction');
+    expect(newPaneArgs).toContain('right');
+    expect(newPaneArgs).toContain('--json');
+    // No command arg — just the flags
+    expect(newPaneArgs[newPaneArgs.length - 1]).toBe('--json');
+
+    // Step 2: send delivers the opencode attach command
+    const sendCalls = commands().filter((c) => c[1] === 'send');
+    expect(sendCalls).toHaveLength(1);
+    const sendArgs = sendCalls[0];
+    expect(sendArgs).toContain('--surface');
+    expect(sendArgs).toContain('surface:5');
+    const sentCmd = sendArgs[sendArgs.length - 1] as string;
+    expect(sentCmd).toContain('opencode attach');
+    expect(sentCmd).toContain('session-abc');
+    expect(sentCmd).toContain('http://localhost:4096');
+    expect(sentCmd).toEndWith('\n');
   });
 
   test('returns failure when binary not available', async () => {
