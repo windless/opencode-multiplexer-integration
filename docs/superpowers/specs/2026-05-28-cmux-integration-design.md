@@ -1,7 +1,7 @@
 # cmux Terminal Multiplexer Integration Design
 
 **Date:** 2026-05-28  
-**Status:** Approved
+**Status:** Approved (revised after specreview)
 
 ## Overview
 
@@ -12,9 +12,9 @@ Add support for [cmux](https://github.com/manaflow-ai/cmux) — the macOS-native
 | Choice | Rationale |
 |--------|-----------|
 | Pure CLI integration | Consistent with existing tmux/zellij implementations; no socket management overhead |
-| One-shot pane creation | `cmux new-pane --direction right -- <command>` creates pane + terminal surface in one call |
-| Full layout support | cmux has `new-split` primitives that can simulate layout patterns |
-| Graceful shutdown (Ctrl+C + close) | Send Ctrl+C via `printf '\x03'`, wait 250ms, then `close-surface` |
+| One-shot pane creation | `cmux new-pane --direction right "command"` creates pane + terminal surface with initial_command via positional arg |
+| Layout: API-congruent no-op | cmux has no `select-layout` equivalent. Accept layout in constructor for API consistency (same as ZellijMultiplexer), but applyLayout is a no-op. |
+| Graceful shutdown (Ctrl+C + close) | Send ETX character (`\u0003`) via `cmux send --surface <id>`, wait 250ms, then `close-surface` |
 
 ## Architecture
 
@@ -46,11 +46,12 @@ Implements the `Multiplexer` interface using cmux CLI commands via `crossSpawn`.
 class CmuxMultiplexer implements Multiplexer {
   readonly type = 'cmux'
 
+  constructor(layout, mainPaneSize)  // accept for API consistency (no-op)
   isInsideSession(): boolean
   isAvailable(): Promise<boolean>
   spawnPane(sessionId, description, serverUrl, directory): Promise<PaneResult>
   closePane(paneId: string): Promise<boolean>
-  applyLayout(layout, mainPaneSize): Promise<void>
+  applyLayout(layout, mainPaneSize): Promise<void>  // no-op, see §5
 }
 ```
 
@@ -60,9 +61,9 @@ class CmuxMultiplexer implements Multiplexer {
 - Check `process.env.CMUX_WORKSPACE_ID` is defined and non-empty.
 - cmux automatically sets `CMUX_WORKSPACE_ID`, `CMUX_SURFACE_ID`, `CMUX_TAB_ID` in managed terminals.
 
-**`isAvailable()`**: Async, checks CLI availability.
-- `command -v cmux` — verify CLI is installed.
-- Optionally `cmux ping` to verify the cmux app is running (returns non-zero if not).
+**`isAvailable()`**: Async, checks CLI binary availability.
+- Use `which cmux` (or `where cmux` on Windows) — same pattern as TmuxMultiplexer.findBinary().
+- No `cmux ping` check. Binary presence is sufficient; if the app is not running, spawnPane will fail with a clear error. This keeps isAvailable fast and side-effect-free.
 
 **Auto detection** (in `factory.ts` `auto` mode):
 ```
@@ -76,79 +77,80 @@ cmux is checked first because it may also set `TERM_PROGRAM=ghostty` (from Ghost
 ### 3. spawnPane
 
 Creates a new pane in the current workspace running the opencode attach command.
+Uses positional argument for initial_command (verified: cmux new-pane passes first positional arg as initial_command).
 
 **Implementation:**
 ```typescript
-const workspaceId = process.env.CMUX_WORKSPACE_ID
-const cmd = `opencode attach "${sessionId}" --server-url "${serverUrl}"`
-const result = await crossSpawn('cmux', [
+// Build attach command (same format as tmux/zellij implementations)
+const quotedDirectory = quoteShellArg(directory)
+const quotedUrl = quoteShellArg(serverUrl)
+const quotedSessionId = quoteShellArg(sessionId)
+
+const opencodeCmd = [
+  'opencode', 'attach', quotedUrl,
+  '--session', quotedSessionId,
+  '--dir', quotedDirectory,
+].join(' ')
+
+// cmux new-pane --direction right --json <initial_command>
+const proc = crossSpawn([cmuxBin,
   'new-pane',
   '--direction', 'right',
   '--json',
-  '--',
-  cmd
-], { cwd: directory })
+  opencodeCmd,          // positional arg → initial_command
+], { stdout: 'pipe', stderr: 'pipe' })
 
-// Parse JSON from stdout to get surface_ref (e.g., "surface:5")
-const output = JSON.parse(result.stdout)
-const surfaceRef = output.surface_ref
+const stdout = await proc.stdout()
+const output = JSON.parse(stdout)
+const surfaceRef = output.surface_ref  // e.g., "surface:5"
 ```
 
 **Returns:** `{ success: true, paneId: surfaceRef }` (we use surface ID as the pane identifier for close/send operations).
+
+**Focus behavior:** cmux `new-pane` does NOT have an explicit `--focus false` CLI flag. If focus-stealing becomes an issue, it can be mitigated later via RPC.
 
 ### 4. closePane
 
 Graceful shutdown: send Ctrl+C first, then close the surface.
 
 ```typescript
-// Step 1: Send Ctrl+C to surface (graceful termination)
-await crossSpawn('cmux', ['send', '--surface', paneId, "$(printf '\\x03')"])
+// Step 1: Send Ctrl+C (ETX, \u0003) to surface for graceful termination
+// Uses raw control character, not shell expansion.
+await crossSpawn([cmuxBin, 'send', '--surface', paneId, '\u0003'])
 
 // Step 2: Wait 250ms for process to exit
 await new Promise(resolve => setTimeout(resolve, 250))
 
 // Step 3: Close the surface
-await crossSpawn('cmux', ['close-surface', '--surface', paneId])
+await crossSpawn([cmuxBin, 'close-surface', '--surface', paneId])
 ```
 
-**Note:** cmux prevents closing the last surface in a workspace, but this won't affect us because we only close surfaces we created.
+**Why `\u0003` and not `$(printf '\\x03')`:** `crossSpawn` passes strings directly to `spawn` args without shell expansion. The string `\u0003` is a JavaScript escape for the ETX character byte 0x03, matching the approach used in `ZellijMultiplexer.closePane` (`'\u0003'`).
+
+**Note:** cmux prevents closing the last surface in a workspace. This won't affect us because we only close surfaces we created as subagent panes. If the user has already closed the main pane (making our surface the last one), close-surface will fail gracefully and return false.
 
 **Returns:** `true` on success, `false` on failure.
 
-### 5. applyLayout
+### 5. applyLayout — No-op (API-congruent)
 
-cmux has no single `select-layout` command. We simulate layouts using `new-split` primitives with debouncing (same pattern as TmuxMultiplexer, 150ms debounce).
+cmux has **no `select-layout` equivalent**. The `new-split` command semantically creates new splits/pane-surfaces — it does **not** rebalance or rearrange existing panes. Using `new-split` for layout would create unwanted empty splits after each pane spawn.
 
-**Layout mapping:**
+**Decision:** `applyLayout()` is a **no-op**, same as `ZellijMultiplexer.applyLayout()`. The constructor accepts `layout` and `mainPaneSize` parameters for API consistency but does not use them.
 
-| Layout | Commands to execute |
-|--------|-------------------|
-| `main-vertical` | `cmux new-split right` (main pane left, aux panes stack right) |
-| `main-horizontal` | `cmux new-split down` (main pane top, aux panes stack bottom) |
-| `tiled` | `cmux new-split right` then `cmux new-split down` (alternating pattern) |
-| `even-horizontal` | `cmux new-split down` (sequential downward splits) |
-| `even-vertical` | `cmux new-split right` (sequential rightward splits) |
+```typescript
+constructor(layout: MultiplexerLayout = 'main-vertical', mainPaneSize = 60) {
+  // cmux does not support programmatic layout control.
+  // Parameters accepted for API consistency (same as ZellijMultiplexer).
+  void layout
+  void mainPaneSize
+}
 
-**Debounce pattern** (same as tmux): Accumulate pane creations within 150ms window, then apply layout commands once to avoid redundant layout operations.
-
-### 6. Layout Debounce Logic
-
+async applyLayout(_layout: MultiplexerLayout, _mainPaneSize: number): Promise<void> {
+  // No-op: cmux has no select-layout equivalent.
+}
 ```
-┌─────────────────────────────────────────────────┐
-│  spawnPane("agent-1")  ──┐                       │
-│  spawnPane("agent-2")  ──┤ (within 150ms)       │
-│  spawnPane("agent-3")  ──┘                       │
-│                           │                       │
-│                    ┌──────▼──────────┐            │
-│                    │ 150ms debounce  │            │
-│                    │ timer fires     │            │
-│                    └──────┬──────────┘            │
-│                           │                       │
-│                    cmux new-split right            │
-│                    cmux new-split down             │
-│                    (based on layout config)        │
-└─────────────────────────────────────────────────┘
-```
+
+This avoids the false equivalence of mapping `new-split` to layout rebalancing, which would produce unintended side effects (extra empty splits) on every spawnPane burst.
 
 ## Configuration Changes
 
@@ -164,16 +166,29 @@ export const multiplexerTypeSchema = z.enum([
 
 ```typescript
 case 'cmux':
-  return new CmuxMultiplexer()
+  multiplexer = new CmuxMultiplexer(config.layout, config.main_pane_size)
+  actualType = 'cmux'
+  break
 ```
 
 Auto detection:
 ```typescript
-function getAutoMultiplexerType(): MultiplexerType | null {
+case 'auto': {
+  if (process.env.CMUX_WORKSPACE_ID) {
+    multiplexer = new CmuxMultiplexer(config.layout, config.main_pane_size)
+    actualType = 'cmux'
+  } else if (process.env.TMUX) {
+    // ...existing tmux/zellij branches
+  }
+}
+```
+
+```typescript
+function getAutoMultiplexerType(): 'tmux' | 'zellij' | 'cmux' | 'none' {
   if (process.env.CMUX_WORKSPACE_ID) return 'cmux'
   if (process.env.TMUX) return 'tmux'
   if (process.env.ZELLIJ) return 'zellij'
-  return null
+  return 'none'
 }
 ```
 
@@ -191,28 +206,31 @@ function getAutoMultiplexerType(): MultiplexerType | null {
 Mock `crossSpawn` and `process.env` to test:
 1. `isInsideSession()` returns `true` when `CMUX_WORKSPACE_ID` is set
 2. `isInsideSession()` returns `false` when not set
-3. `isAvailable()` returns `true` when `command -v cmux` succeeds
+3. `isAvailable()` returns `true` when `which cmux` succeeds
 4. `isAvailable()` returns `false` when binary not found
-5. `spawnPane()` calls `cmux new-pane --direction right --json -- <cmd>` with correct args (including `--` separator and CDPATH handling)
-6. `spawnPane()` parses `surface_ref` from JSON stdout
-7. `closePane()` sends Ctrl+C then calls `close-surface`
-8. `applyLayout()` calls `cmux new-split` with correct direction based on layout type
-9. Layout debounce: multiple rapid `applyLayout` calls result in only one set of commands
+5. `spawnPane()` calls `cmux new-pane --direction right --json <cmd>` with correct args
+6. `spawnPane()` parses `surface_ref` from JSON stdout; returns failure on missing/parse error
+7. `spawnPane()` returns `{ success: false }` when binary unavailable or new-pane exits non-zero
+8. `closePane()` sends `\u0003` (ETX) then calls `close-surface` after delay
+9. `closePane()` returns `false` for empty paneId
+10. `closePane()` returns `false` when close-surface fails
+11. `applyLayout()` does NOT spawn any cmux commands (verify no-op)
+12. Constructor accepts layout and mainPaneSize without error
 
 ### factory.test.ts (additions)
 
-1. `getMultiplexer({ type: 'cmux' })` returns `CmuxMultiplexer` instance
+1. `getMultiplexer({ type: 'cmux' })` returns `CmuxMultiplexer` instance with `type === 'cmux'`
 2. `auto` mode detects cmux when `CMUX_WORKSPACE_ID` is set
 3. `auto` mode cascades correctly (cmux has priority over tmux)
 4. `none` mode still returns `null`
 
 ## Edge Cases
 
-1. **Last surface protection**: cmux refuses to close the last surface. Not an issue since we only close surfaces we created as subagent panes.
-2. **Shell injection in commands**: Commands passed to `new-pane` go through positional arguments after `--`, avoiding shell injection via flag parsing.
-3. **New pane not ready immediately**: cmux may take a moment to initialize the terminal surface. Using `--json` ensures we get the surface_ref synchronously once created.
-4. **CMUX_WORKSPACE_ID contains UUID**: The environment variable may contain a UUID (e.g., `550e8400-e29b-41d4-a716-446655440000`) rather than a ref like `workspace:2`. CMUX_WORKSPACE_ID should only be used for detection, not for passing to commands. However, cmux CLI commands accept both UUID and ref formats. If we need the workspace ref for commands, we can use `cmux identify --json` or just pass the UUID.
-5. **Missing cmux CLI**: When cmux is running as a GUI app but CLI symlink is not set up, `isAvailable()` returns false. User needs to run the setup symlink command.
+1. **Last surface protection**: cmux refuses to close the last surface. Since we only close surfaces we created, the user's original surface is always present. If the user closes their surface first, closePane will fail gracefully.
+2. **Shell injection in commands**: Commands are passed as a single positional argument to `new-pane`, not through a shell. The `quoteShellArg` helper follows the same pattern as TmuxMultiplexer.
+3. **JSON parse failure**: If `new-pane --json` returns malformed JSON or missing `surface_ref`, spawnPane returns `{ success: false }` gracefully.
+4. **CMUX_WORKSPACE_ID format**: May be a UUID (e.g., `550e8400-...`) rather than a ref like `workspace:2`. Used only for detection; commands that need workspace context use `new-pane` which auto-targets the caller's workspace.
+5. **Missing cmux CLI**: When cmux is running as a GUI app but CLI symlink is not set up, `isAvailable()` returns false. User needs to run the setup symlink command from cmux docs.
 
 ## Dependencies
 
