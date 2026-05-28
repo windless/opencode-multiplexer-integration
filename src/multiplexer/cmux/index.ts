@@ -59,6 +59,50 @@ export class CmuxMultiplexer implements Multiplexer {
     }
 
     try {
+      // Step 1: Create a new pane (empty, no initial command)
+      const createArgs = ['new-pane', '--direction', 'right', '--json'];
+
+      log('[cmux] spawnPane: creating pane', { cmuxBin, createArgs });
+
+      const createProc = crossSpawn([cmuxBin, ...createArgs], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+
+      const createExitCode = await createProc.exited;
+      const createStdout = await createProc.stdout();
+      const createStderr = await createProc.stderr();
+
+      log('[cmux] spawnPane: create result', {
+        exitCode: createExitCode,
+        stderr: createStderr.trim(),
+      });
+
+      if (createExitCode !== 0) {
+        return { success: false };
+      }
+
+      // Parse surface_ref from JSON output
+      let surfaceRef: string | undefined;
+      try {
+        const output = JSON.parse(createStdout) as {
+          surface_ref?: string;
+          pane_ref?: string;
+        };
+        surfaceRef = output.surface_ref;
+        if (!surfaceRef) {
+          log('[cmux] spawnPane: no surface_ref in output', { output });
+          return { success: false };
+        }
+      } catch (parseErr) {
+        log('[cmux] spawnPane: JSON parse failed', {
+          stdout: createStdout,
+          error: String(parseErr),
+        });
+        return { success: false };
+      }
+
+      // Step 2: Send the opencode attach command to the new surface
       const quotedDirectory = quoteShellArg(directory);
       const quotedUrl = quoteShellArg(serverUrl);
       const quotedSessionId = quoteShellArg(sessionId);
@@ -73,44 +117,30 @@ export class CmuxMultiplexer implements Multiplexer {
         quotedDirectory,
       ].join(' ');
 
-      // cmux new-pane --direction right --json <initial_command>
-      // Positional arg after flags becomes initial_command
-      const args = ['new-pane', '--direction', 'right', '--json', opencodeCmd];
+      // Brief wait for the terminal surface to be ready
+      await new Promise((r) => setTimeout(r, 100));
 
-      log('[cmux] spawnPane: executing', { cmuxBin, args });
-
-      const proc = crossSpawn([cmuxBin, ...args], {
-        stdout: 'pipe',
-        stderr: 'pipe',
+      log('[cmux] spawnPane: sending command', {
+        surfaceRef,
+        cmd: opencodeCmd,
       });
 
-      const exitCode = await proc.exited;
-      const stdout = await proc.stdout();
-      const stderr = await proc.stderr();
+      const sendProc = crossSpawn(
+        [cmuxBin, 'send', '--surface', surfaceRef, `${opencodeCmd}\n`],
+        { stdout: 'pipe', stderr: 'pipe' },
+      );
 
-      log('[cmux] spawnPane: result', { exitCode, stderr: stderr.trim() });
+      const sendExitCode = await sendProc.exited;
+      const sendStderr = await sendProc.stderr();
 
-      if (exitCode === 0) {
-        try {
-          const output = JSON.parse(stdout) as {
-            surface_ref?: string;
-            pane_ref?: string;
-          };
-          const surfaceRef = output.surface_ref;
-          if (surfaceRef) {
-            log('[cmux] spawnPane: SUCCESS', {
-              surfaceRef,
-              paneRef: output.pane_ref,
-            });
-            return { success: true, paneId: surfaceRef };
-          }
-          log('[cmux] spawnPane: no surface_ref in output', { output });
-        } catch (parseErr) {
-          log('[cmux] spawnPane: JSON parse failed', {
-            stdout,
-            error: String(parseErr),
-          });
-        }
+      log('[cmux] spawnPane: send result', {
+        exitCode: sendExitCode,
+        stderr: sendStderr.trim(),
+      });
+
+      if (sendExitCode === 0) {
+        log('[cmux] spawnPane: SUCCESS', { surfaceRef });
+        return { success: true, paneId: surfaceRef };
       }
 
       return { success: false };
