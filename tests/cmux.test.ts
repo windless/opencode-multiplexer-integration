@@ -139,7 +139,7 @@ describe('CmuxMultiplexer — spawnPane', () => {
     expect(newPaneArgs).not.toContain('--surface'); // 1st agent: no --surface
   });
 
-  test('2nd agent: splits from previous agent surface with nested direction', async () => {
+  test('2nd agent: focuses previous pane then splits (no --surface)', async () => {
     const { CmuxMultiplexer } = await importFreshCmux();
     const cmux = new CmuxMultiplexer('main-vertical', 60);
     await cmux.isAvailable();
@@ -165,11 +165,17 @@ describe('CmuxMultiplexer — spawnPane', () => {
     expect(result.success).toBe(true);
     expect(result.paneId).toBe('surface:6');
 
+    // 2nd agent should focus the previous agent's pane first
+    const focusArgs = commands().find((c) => c[1] === 'focus-pane')!;
+    expect(focusArgs).toBeDefined();
+    expect(focusArgs).toContain('--pane');
+    expect(focusArgs).toContain('pane:3'); // previous agent's pane_ref
+
+    // Then new-pane splits within that pane (no --surface)
     const newPaneArgs = commands().find((c) => c[1] === 'new-pane')!;
-    // 2nd agent should use --surface + nested direction
-    expect(newPaneArgs).toContain('--surface');
-    expect(newPaneArgs).toContain('surface:5'); // previous agent's ref
+    expect(newPaneArgs).toContain('--direction');
     expect(newPaneArgs).toContain('down'); // main-vertical nested = down
+    expect(newPaneArgs).not.toContain('--surface');
   });
 
   test('main-horizontal: 1st down, 2nd nested right', async () => {
@@ -199,12 +205,16 @@ describe('CmuxMultiplexer — spawnPane', () => {
       '/repo',
     );
 
+    // 2nd agent focuses previous pane first
+    const focusArgs = commands().find((c) => c[1] === 'focus-pane')!;
+    expect(focusArgs).toBeDefined();
+
     paneArgs = commands().find((c) => c[1] === 'new-pane')!;
-    expect(paneArgs).toContain('--surface');
     expect(paneArgs).toContain('right'); // nested direction
+    expect(paneArgs).not.toContain('--surface');
   });
 
-  test('closePane clears lastSurfaceRef so next spawn is first agent again', async () => {
+  test('closePane clears lastAgent so next spawn is first agent again', async () => {
     const { CmuxMultiplexer } = await importFreshCmux();
     const cmux = new CmuxMultiplexer('main-vertical', 60);
     await cmux.isAvailable();

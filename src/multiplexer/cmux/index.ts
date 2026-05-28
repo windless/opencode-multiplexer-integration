@@ -21,7 +21,7 @@ export class CmuxMultiplexer implements Multiplexer {
   private binaryPath: string | null = null;
   private hasChecked = false;
   private storedLayout: MultiplexerLayout;
-  private lastSurfaceRef: string | null = null;
+  private lastAgent: { surfaceRef: string; paneRef: string } | null = null;
 
   constructor(layout: MultiplexerLayout = 'main-vertical', mainPaneSize = 60) {
     this.storedLayout = layout;
@@ -56,21 +56,33 @@ export class CmuxMultiplexer implements Multiplexer {
     }
 
     try {
-      // Build create args with cascading direction
-      const createArgs = ['new-pane', '--json'];
-
-      if (this.lastSurfaceRef) {
-        // 2nd+ agent: split from previous agent surface
-        createArgs.push(
-          '--surface',
-          this.lastSurfaceRef,
-          '--direction',
-          nestedDirection(this.storedLayout),
+      // 2nd+ agent: first focus the previous agent's pane so that
+      // new-pane splits within the correct pane (new-pane --surface
+      // is ignored by cmux, so we use focus-pane instead).
+      if (this.lastAgent) {
+        log('[cmux] spawnPane: focusing previous pane', {
+          paneRef: this.lastAgent.paneRef,
+        });
+        const focusProc = crossSpawn(
+          [cmuxBin, 'focus-pane', '--pane', this.lastAgent.paneRef],
+          { stdout: 'pipe', stderr: 'pipe' },
         );
-      } else {
-        // 1st agent: split from main pane
-        createArgs.push('--direction', firstDirection(this.storedLayout));
+        const focusExitCode = await focusProc.exited;
+        if (focusExitCode !== 0) {
+          log('[cmux] spawnPane: focus-pane failed, clearing cascade');
+          this.lastAgent = null;
+          return { success: false };
+        }
       }
+
+      // Build create args — new-pane splits from the currently focused pane
+      const createArgs = ['new-pane', '--json'];
+      createArgs.push(
+        '--direction',
+        this.lastAgent
+          ? nestedDirection(this.storedLayout)
+          : firstDirection(this.storedLayout),
+      );
 
       log('[cmux] spawnPane: creating pane', { cmuxBin, createArgs });
 
@@ -89,25 +101,21 @@ export class CmuxMultiplexer implements Multiplexer {
       });
 
       if (createExitCode !== 0) {
-        // If --surface failed (stale ref), clear and retry without it
-        if (this.lastSurfaceRef) {
-          log('[cmux] spawnPane: surface ref may be stale, clearing');
-          this.lastSurfaceRef = null;
-          return { success: false };
-        }
         return { success: false };
       }
 
-      // Parse surface_ref from JSON output
+      // Parse surface_ref & pane_ref from JSON output
       let surfaceRef: string | undefined;
+      let paneRef: string | undefined;
       try {
         const output = JSON.parse(createStdout) as {
           surface_ref?: string;
           pane_ref?: string;
         };
         surfaceRef = output.surface_ref;
-        if (!surfaceRef) {
-          log('[cmux] spawnPane: no surface_ref in output', { output });
+        paneRef = output.pane_ref;
+        if (!surfaceRef || !paneRef) {
+          log('[cmux] spawnPane: missing refs in output', { output });
           return { success: false };
         }
       } catch (parseErr) {
@@ -118,8 +126,8 @@ export class CmuxMultiplexer implements Multiplexer {
         return { success: false };
       }
 
-      // Update cascade reference for the next agent
-      this.lastSurfaceRef = surfaceRef;
+      // Store both surface_ref and pane_ref for cascading
+      this.lastAgent = { surfaceRef, paneRef };
 
       // Step 2: Send the opencode attach command to the new surface
       const quotedDirectory = quoteShellArg(directory);
@@ -208,8 +216,8 @@ export class CmuxMultiplexer implements Multiplexer {
       if (exitCode === 0) {
         // If we closed the last cascaded agent pane, clear the ref
         // so the next spawn starts fresh from the main pane
-        if (paneId === this.lastSurfaceRef) {
-          this.lastSurfaceRef = null;
+        if (paneId === this.lastAgent?.surfaceRef) {
+          this.lastAgent = null;
         }
         return true;
       }
