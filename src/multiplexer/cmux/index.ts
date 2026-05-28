@@ -23,12 +23,12 @@ export class CmuxMultiplexer implements Multiplexer {
 
   private binaryPath: string | null = null;
   private hasChecked = false;
-  private storedLayout: MultiplexerLayout;
-  private storedMainPaneSize: number;
 
   constructor(layout: MultiplexerLayout = 'main-vertical', mainPaneSize = 60) {
-    this.storedLayout = layout;
-    this.storedMainPaneSize = mainPaneSize;
+    // cmux does not support programmatic layout control.
+    // Parameters accepted for API consistency (same as ZellijMultiplexer).
+    void layout;
+    void mainPaneSize;
   }
 
   async isAvailable(): Promise<boolean> {
@@ -48,7 +48,7 @@ export class CmuxMultiplexer implements Multiplexer {
 
   async spawnPane(
     sessionId: string,
-    description: string,
+    _description: string,
     serverUrl: string,
     directory: string,
   ): Promise<PaneResult> {
@@ -64,19 +64,18 @@ export class CmuxMultiplexer implements Multiplexer {
       const quotedSessionId = quoteShellArg(sessionId);
 
       const opencodeCmd = [
-        'opencode', 'attach', quotedUrl,
-        '--session', quotedSessionId,
-        '--dir', quotedDirectory,
+        'opencode',
+        'attach',
+        quotedUrl,
+        '--session',
+        quotedSessionId,
+        '--dir',
+        quotedDirectory,
       ].join(' ');
 
       // cmux new-pane --direction right --json <initial_command>
       // Positional arg after flags becomes initial_command
-      const args = [
-        'new-pane',
-        '--direction', 'right',
-        '--json',
-        opencodeCmd,
-      ];
+      const args = ['new-pane', '--direction', 'right', '--json', opencodeCmd];
 
       log('[cmux] spawnPane: executing', { cmuxBin, args });
 
@@ -99,12 +98,18 @@ export class CmuxMultiplexer implements Multiplexer {
           };
           const surfaceRef = output.surface_ref;
           if (surfaceRef) {
-            log('[cmux] spawnPane: SUCCESS', { surfaceRef, paneRef: output.pane_ref });
+            log('[cmux] spawnPane: SUCCESS', {
+              surfaceRef,
+              paneRef: output.pane_ref,
+            });
             return { success: true, paneId: surfaceRef };
           }
           log('[cmux] spawnPane: no surface_ref in output', { output });
         } catch (parseErr) {
-          log('[cmux] spawnPane: JSON parse failed', { stdout, error: String(parseErr) });
+          log('[cmux] spawnPane: JSON parse failed', {
+            stdout,
+            error: String(parseErr),
+          });
         }
       }
 
@@ -141,10 +146,10 @@ export class CmuxMultiplexer implements Multiplexer {
       await new Promise((r) => setTimeout(r, 250));
 
       log('[cmux] closePane: closing surface', { paneId });
-      const proc = crossSpawn(
-        [cmuxBin, 'close-surface', '--surface', paneId],
-        { stdout: 'pipe', stderr: 'pipe' },
-      );
+      const proc = crossSpawn([cmuxBin, 'close-surface', '--surface', paneId], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
 
       const exitCode = await proc.exited;
       const stderr = await proc.stderr();
@@ -153,7 +158,9 @@ export class CmuxMultiplexer implements Multiplexer {
 
       if (exitCode === 0) return true;
 
-      log('[cmux] closePane: failed (surface may already be closed)', { paneId });
+      log('[cmux] closePane: failed (surface may already be closed)', {
+        paneId,
+      });
       return false;
     } catch (err) {
       log('[cmux] closePane: exception', { error: String(err) });

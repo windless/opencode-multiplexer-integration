@@ -17,7 +17,11 @@ mock.module('../src/utils/compat', () => ({ crossSpawn: crossSpawnMock }));
 
 let importCounter = 0;
 
-function createSpawnResult(exitCode = 0, stdout = '', stderr = ''): SpawnResult {
+function createSpawnResult(
+  exitCode = 0,
+  stdout = '',
+  stderr = '',
+): SpawnResult {
   return {
     exited: Promise.resolve(exitCode),
     stdout: () => Promise.resolve(stdout),
@@ -66,7 +70,8 @@ describe('CmuxMultiplexer — detection', () => {
   test('isAvailable returns true when cmux CLI is found', async () => {
     crossSpawnMock.mockReset();
     crossSpawnMock.mockImplementation((command: string[]) => {
-      if (command[0] === 'which') return createSpawnResult(0, '/usr/local/bin/cmux\n');
+      if (command[0] === 'which')
+        return createSpawnResult(0, '/usr/local/bin/cmux\n');
       return createSpawnResult();
     });
     const { CmuxMultiplexer } = await importFreshCmux();
@@ -92,13 +97,17 @@ describe('CmuxMultiplexer — spawnPane', () => {
     logMock.mockClear();
     crossSpawnMock.mockReset();
     crossSpawnMock.mockImplementation((command: string[]) => {
-      if (command[0] === 'which') return createSpawnResult(0, '/usr/local/bin/cmux\n');
+      if (command[0] === 'which')
+        return createSpawnResult(0, '/usr/local/bin/cmux\n');
       if (command[1] === 'new-pane') {
-        return createSpawnResult(0, JSON.stringify({
-          surface_ref: 'surface:5',
-          pane_ref: 'pane:3',
-          workspace_ref: 'workspace:1',
-        }));
+        return createSpawnResult(
+          0,
+          JSON.stringify({
+            surface_ref: 'surface:5',
+            pane_ref: 'pane:3',
+            workspace_ref: 'workspace:1',
+          }),
+        );
       }
       return createSpawnResult();
     });
@@ -109,12 +118,17 @@ describe('CmuxMultiplexer — spawnPane', () => {
     const cmux = new CmuxMultiplexer('main-vertical', 60);
     await cmux.isAvailable(); // warm binary cache
 
-    const result = await cmux.spawnPane('session-abc', 'my-agent', 'http://localhost:4096', '/home/user/project');
+    const result = await cmux.spawnPane(
+      'session-abc',
+      'my-agent',
+      'http://localhost:4096',
+      '/home/user/project',
+    );
 
     expect(result.success).toBe(true);
     expect(result.paneId).toBe('surface:5');
 
-    const newPaneCalls = commands().filter(c => c[1] === 'new-pane');
+    const newPaneCalls = commands().filter((c) => c[1] === 'new-pane');
     expect(newPaneCalls).toHaveLength(1);
     const args = newPaneCalls[0];
     expect(args).toContain('--direction');
@@ -138,8 +152,10 @@ describe('CmuxMultiplexer — spawnPane', () => {
   test('returns failure when new-pane exits non-zero', async () => {
     crossSpawnMock.mockReset();
     crossSpawnMock.mockImplementation((command: string[]) => {
-      if (command[0] === 'which') return createSpawnResult(0, '/usr/local/bin/cmux\n');
-      if (command[1] === 'new-pane') return createSpawnResult(1, '', 'creation failed');
+      if (command[0] === 'which')
+        return createSpawnResult(0, '/usr/local/bin/cmux\n');
+      if (command[1] === 'new-pane')
+        return createSpawnResult(1, '', 'creation failed');
       return createSpawnResult();
     });
     const { CmuxMultiplexer } = await importFreshCmux();
@@ -151,8 +167,10 @@ describe('CmuxMultiplexer — spawnPane', () => {
   test('handles missing surface_ref in JSON', async () => {
     crossSpawnMock.mockReset();
     crossSpawnMock.mockImplementation((command: string[]) => {
-      if (command[0] === 'which') return createSpawnResult(0, '/usr/local/bin/cmux\n');
-      if (command[1] === 'new-pane') return createSpawnResult(0, JSON.stringify({ pane_ref: 'pane:3' }));
+      if (command[0] === 'which')
+        return createSpawnResult(0, '/usr/local/bin/cmux\n');
+      if (command[1] === 'new-pane')
+        return createSpawnResult(0, JSON.stringify({ pane_ref: 'pane:3' }));
       return createSpawnResult();
     });
     const { CmuxMultiplexer } = await importFreshCmux();
@@ -169,7 +187,8 @@ describe('CmuxMultiplexer — closePane', () => {
     logMock.mockClear();
     crossSpawnMock.mockReset();
     crossSpawnMock.mockImplementation((command: string[]) => {
-      if (command[0] === 'which') return createSpawnResult(0, '/usr/local/bin/cmux\n');
+      if (command[0] === 'which')
+        return createSpawnResult(0, '/usr/local/bin/cmux\n');
       return createSpawnResult(0, '', '');
     });
   });
@@ -185,7 +204,7 @@ describe('CmuxMultiplexer — closePane', () => {
 
     const allCalls = commands();
 
-    const sendCalls = allCalls.filter(c => c[1] === 'send');
+    const sendCalls = allCalls.filter((c) => c[1] === 'send');
     expect(sendCalls).toHaveLength(1);
     const sendArgs = sendCalls[0];
     expect(sendArgs).toContain('--surface');
@@ -193,7 +212,7 @@ describe('CmuxMultiplexer — closePane', () => {
     // Should send raw ETX byte \u0003 (Ctrl+C)
     expect(sendArgs[sendArgs.length - 1]).toBe('\u0003');
 
-    const closeCalls = allCalls.filter(c => c[1] === 'close-surface');
+    const closeCalls = allCalls.filter((c) => c[1] === 'close-surface');
     expect(closeCalls).toHaveLength(1);
     expect(closeCalls[0]).toContain('--surface');
     expect(closeCalls[0]).toContain('surface:5');
@@ -208,9 +227,11 @@ describe('CmuxMultiplexer — closePane', () => {
   test('returns false when close-surface fails', async () => {
     crossSpawnMock.mockReset();
     crossSpawnMock.mockImplementation((command: string[]) => {
-      if (command[0] === 'which') return createSpawnResult(0, '/usr/local/bin/cmux\n');
+      if (command[0] === 'which')
+        return createSpawnResult(0, '/usr/local/bin/cmux\n');
       if (command[1] === 'send') return createSpawnResult(0, '', '');
-      if (command[1] === 'close-surface') return createSpawnResult(1, '', 'no such surface');
+      if (command[1] === 'close-surface')
+        return createSpawnResult(1, '', 'no such surface');
       return createSpawnResult();
     });
     const { CmuxMultiplexer } = await importFreshCmux();
@@ -234,8 +255,8 @@ describe('CmuxMultiplexer — applyLayout', () => {
     await cmux.applyLayout('main-vertical', 60);
     await cmux.applyLayout('tiled', 60);
 
-    const layoutCmds = commands().filter(c =>
-      c.includes('new-split') || c.includes('new-pane')
+    const layoutCmds = commands().filter(
+      (c) => c.includes('new-split') || c.includes('new-pane'),
     );
     expect(layoutCmds).toHaveLength(0);
   });
