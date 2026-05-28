@@ -23,12 +23,12 @@ export class CmuxMultiplexer implements Multiplexer {
 
   private binaryPath: string | null = null;
   private hasChecked = false;
+  private storedLayout: MultiplexerLayout;
+  private storedMainPaneSize: number;
 
   constructor(layout: MultiplexerLayout = 'main-vertical', mainPaneSize = 60) {
-    // cmux does not support programmatic layout control.
-    // Parameters accepted for API consistency (same as ZellijMultiplexer).
-    void layout;
-    void mainPaneSize;
+    this.storedLayout = layout;
+    this.storedMainPaneSize = mainPaneSize;
   }
 
   async isAvailable(): Promise<boolean> {
@@ -99,13 +99,6 @@ export class CmuxMultiplexer implements Multiplexer {
           };
           const surfaceRef = output.surface_ref;
           if (surfaceRef) {
-            // Best-effort pane rename via OSC title escape
-            const title = description.slice(0, 30);
-            crossSpawn(
-              [cmuxBin, 'send', '--surface', surfaceRef, `\x1b]0;${title}\x07`],
-              { stdout: 'ignore', stderr: 'ignore' },
-            );
-
             log('[cmux] spawnPane: SUCCESS', { surfaceRef, paneRef: output.pane_ref });
             return { success: true, paneId: surfaceRef };
           }
