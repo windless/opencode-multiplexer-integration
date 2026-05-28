@@ -2,15 +2,12 @@
  * cmux multiplexer implementation
  *
  * cmux is a macOS-native terminal multiplexer built on Ghostty (libghostty).
- * It provides rich CLI with --json output for programmatic control.
+ * Uses CLI commands (new-pane, close-surface, send) for pane lifecycle.
  *
- * Key commands used:
- *   new-pane --direction right --json <cmd>   — create pane + terminal surface
- *   close-surface --surface <id>              — close a surface
- *   send --surface <id> <text>                — send text/keys to surface
- *
- * Layout: No-op (same as ZellijMultiplexer). cmux has no select-layout
- * equivalent; new-split creates new splits, it does not rebalance.
+ * Layout: cmux has no select-layout equivalent. Instead, we cascade panes:
+ *   - 1st agent: splits from main pane (right or down)
+ *   - 2nd+ agent: splits from the previous agent's surface (nested direction)
+ *   This mimics main-horizontal / main-vertical behaviour without a layout command.
  */
 
 import type { MultiplexerLayout } from '../../config/schema';
@@ -23,11 +20,11 @@ export class CmuxMultiplexer implements Multiplexer {
 
   private binaryPath: string | null = null;
   private hasChecked = false;
+  private storedLayout: MultiplexerLayout;
+  private lastSurfaceRef: string | null = null;
 
   constructor(layout: MultiplexerLayout = 'main-vertical', mainPaneSize = 60) {
-    // cmux does not support programmatic layout control.
-    // Parameters accepted for API consistency (same as ZellijMultiplexer).
-    void layout;
+    this.storedLayout = layout;
     void mainPaneSize;
   }
 
@@ -59,8 +56,21 @@ export class CmuxMultiplexer implements Multiplexer {
     }
 
     try {
-      // Step 1: Create a new pane (empty, no initial command)
-      const createArgs = ['new-pane', '--direction', 'right', '--json'];
+      // Build create args with cascading direction
+      const createArgs = ['new-pane', '--json'];
+
+      if (this.lastSurfaceRef) {
+        // 2nd+ agent: split from previous agent surface
+        createArgs.push(
+          '--surface',
+          this.lastSurfaceRef,
+          '--direction',
+          nestedDirection(this.storedLayout),
+        );
+      } else {
+        // 1st agent: split from main pane
+        createArgs.push('--direction', firstDirection(this.storedLayout));
+      }
 
       log('[cmux] spawnPane: creating pane', { cmuxBin, createArgs });
 
@@ -79,6 +89,12 @@ export class CmuxMultiplexer implements Multiplexer {
       });
 
       if (createExitCode !== 0) {
+        // If --surface failed (stale ref), clear and retry without it
+        if (this.lastSurfaceRef) {
+          log('[cmux] spawnPane: surface ref may be stale, clearing');
+          this.lastSurfaceRef = null;
+          return { success: false };
+        }
         return { success: false };
       }
 
@@ -101,6 +117,9 @@ export class CmuxMultiplexer implements Multiplexer {
         });
         return { success: false };
       }
+
+      // Update cascade reference for the next agent
+      this.lastSurfaceRef = surfaceRef;
 
       // Step 2: Send the opencode attach command to the new surface
       const quotedDirectory = quoteShellArg(directory);
@@ -186,7 +205,14 @@ export class CmuxMultiplexer implements Multiplexer {
 
       log('[cmux] closePane: result', { exitCode, stderr: stderr.trim() });
 
-      if (exitCode === 0) return true;
+      if (exitCode === 0) {
+        // If we closed the last cascaded agent pane, clear the ref
+        // so the next spawn starts fresh from the main pane
+        if (paneId === this.lastSurfaceRef) {
+          this.lastSurfaceRef = null;
+        }
+        return true;
+      }
 
       log('[cmux] closePane: failed (surface may already be closed)', {
         paneId,
@@ -243,4 +269,38 @@ export class CmuxMultiplexer implements Multiplexer {
 
 function quoteShellArg(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Direction for the 1st agent pane (split from main pane).
+ */
+function firstDirection(layout: MultiplexerLayout): string {
+  switch (layout) {
+    case 'main-horizontal':
+    case 'even-horizontal':
+      return 'down';
+    case 'main-vertical':
+    case 'even-vertical':
+    case 'tiled':
+    default:
+      return 'right';
+  }
+}
+
+/**
+ * Direction for 2nd+ agent pane (split from previous agent surface).
+ */
+function nestedDirection(layout: MultiplexerLayout): string {
+  switch (layout) {
+    case 'main-vertical':
+    case 'even-vertical':
+      return 'down'; // stack agents vertically inside the right column
+    case 'main-horizontal':
+    case 'even-horizontal':
+      return 'right'; // line agents horizontally inside the bottom row
+    case 'tiled':
+      return 'down'; // alternate would be ideal, but simple down works
+    default:
+      return 'down';
+  }
 }
