@@ -93,7 +93,7 @@ describe('cmux factory', () => {
     });
 
     expect(mux).not.toBeNull();
-    expect(mux!.type).toBe('cmux');
+    expect(mux?.type).toBe('cmux');
   });
 
   test('auto mode detects cmux when CMUX_WORKSPACE_ID is set', async () => {
@@ -110,7 +110,7 @@ describe('cmux factory', () => {
     });
 
     expect(mux).not.toBeNull();
-    expect(mux!.type).toBe('cmux');
+    expect(mux?.type).toBe('cmux');
   });
 
   test('cmux has priority over tmux in auto mode', async () => {
@@ -126,6 +126,6 @@ describe('cmux factory', () => {
     });
 
     expect(mux).not.toBeNull();
-    expect(mux!.type).toBe('cmux');
+    expect(mux?.type).toBe('cmux');
   });
 });
