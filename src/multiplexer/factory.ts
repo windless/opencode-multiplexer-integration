@@ -7,6 +7,7 @@ import { log } from '../utils/logger';
 import { TmuxMultiplexer } from './tmux';
 import type { Multiplexer } from './types';
 import { ZellijMultiplexer } from './zellij';
+import { CmuxMultiplexer } from './cmux';
 
 /**
  * Create a multiplexer instance based on config.
@@ -35,10 +36,17 @@ export function getMultiplexer(config: MultiplexerConfig): Multiplexer | null {
       multiplexer = new ZellijMultiplexer(config.layout, config.main_pane_size);
       actualType = 'zellij';
       break;
+    case 'cmux':
+      multiplexer = new CmuxMultiplexer(config.layout, config.main_pane_size);
+      actualType = 'cmux';
+      break;
     case 'auto': {
       // Auto-detect based on environment variables only
       // Note: Does NOT fall back to binary availability checks
-      if (process.env.TMUX) {
+      if (process.env.CMUX_WORKSPACE_ID) {
+        multiplexer = new CmuxMultiplexer(config.layout, config.main_pane_size);
+        actualType = 'cmux';
+      } else if (process.env.TMUX) {
         multiplexer = new TmuxMultiplexer(config.layout, config.main_pane_size);
         actualType = 'tmux';
       } else if (process.env.ZELLIJ) {
@@ -75,7 +83,10 @@ export function clearMultiplexerCache(): void {
  * Get the effective multiplexer type for auto mode
  * Returns the actual type that would be used (tmux/zellij/none)
  */
-export function getAutoMultiplexerType(): 'tmux' | 'zellij' | 'none' {
+export function getAutoMultiplexerType(): 'tmux' | 'zellij' | 'cmux' | 'none' {
+  if (process.env.CMUX_WORKSPACE_ID) {
+    return 'cmux';
+  }
   if (process.env.TMUX) {
     return 'tmux';
   }
