@@ -17,7 +17,7 @@ export interface PaneResult {
  * Implementations: TmuxMultiplexer, ZellijMultiplexer
  */
 export interface Multiplexer {
-  readonly type: 'tmux' | 'zellij';
+  readonly type: 'tmux' | 'zellij' | 'cmux';
 
   /**
    * Check if the multiplexer binary is available on the system

@@ -14,4 +14,5 @@ export {
 export { TmuxMultiplexer } from './tmux';
 export type { Multiplexer, PaneResult } from './types';
 export { isServerRunning } from './types';
+export { CmuxMultiplexer } from './cmux';
 export { ZellijMultiplexer } from './zellij';
