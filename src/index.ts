@@ -36,10 +36,12 @@ const MultiplexerPlugin: Plugin = async (ctx, options) => {
 
   if (userMultiplexerConfig) {
     if (typeof userMultiplexerConfig.type === 'string') {
-      multiplexerConfig.type = userMultiplexerConfig.type as MultiplexerConfig['type'];
+      multiplexerConfig.type =
+        userMultiplexerConfig.type as MultiplexerConfig['type'];
     }
     if (typeof userMultiplexerConfig.layout === 'string') {
-      multiplexerConfig.layout = userMultiplexerConfig.layout as MultiplexerConfig['layout'];
+      multiplexerConfig.layout =
+        userMultiplexerConfig.layout as MultiplexerConfig['layout'];
     }
     if (typeof userMultiplexerConfig.main_pane_size === 'number') {
       multiplexerConfig.main_pane_size = userMultiplexerConfig.main_pane_size;

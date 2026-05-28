@@ -4,10 +4,10 @@
 
 import type { MultiplexerConfig, MultiplexerType } from '../config/schema';
 import { log } from '../utils/logger';
+import { CmuxMultiplexer } from './cmux';
 import { TmuxMultiplexer } from './tmux';
 import type { Multiplexer } from './types';
 import { ZellijMultiplexer } from './zellij';
-import { CmuxMultiplexer } from './cmux';
 
 /**
  * Create a multiplexer instance based on config.
