@@ -91,19 +91,24 @@ describe('CmuxMultiplexer — detection', () => {
 // ─── spawnPane ──────────────────────────────────
 
 describe('CmuxMultiplexer — spawnPane', () => {
+  let surfaceCounter = 5;
+
   beforeEach(() => {
     process.env.CMUX_WORKSPACE_ID = 'workspace-1';
     process.env.CMUX_SURFACE_ID = 'surface-1';
+    surfaceCounter = 5;
+
     logMock.mockClear();
     crossSpawnMock.mockReset();
     crossSpawnMock.mockImplementation((command: string[]) => {
       if (command[0] === 'which')
         return createSpawnResult(0, '/usr/local/bin/cmux\n');
       if (command[1] === 'new-pane') {
+        const ref = `surface:${surfaceCounter++}`;
         return createSpawnResult(
           0,
           JSON.stringify({
-            surface_ref: 'surface:5',
+            surface_ref: ref,
             pane_ref: 'pane:3',
             workspace_ref: 'workspace:1',
           }),
@@ -113,42 +118,117 @@ describe('CmuxMultiplexer — spawnPane', () => {
     });
   });
 
-  test('creates pane then sends command via send', async () => {
+  test('1st agent: splits from main pane with right direction', async () => {
     const { CmuxMultiplexer } = await importFreshCmux();
     const cmux = new CmuxMultiplexer('main-vertical', 60);
-    await cmux.isAvailable(); // warm binary cache
+    await cmux.isAvailable();
 
     const result = await cmux.spawnPane(
-      'session-abc',
-      'my-agent',
+      'session-1',
+      'agent-1',
       'http://localhost:4096',
-      '/home/user/project',
+      '/repo',
     );
 
     expect(result.success).toBe(true);
     expect(result.paneId).toBe('surface:5');
 
-    // Step 1: new-pane creates pane without command
-    const newPaneCalls = commands().filter((c) => c[1] === 'new-pane');
-    expect(newPaneCalls).toHaveLength(1);
-    const newPaneArgs = newPaneCalls[0];
+    const newPaneArgs = commands().find((c) => c[1] === 'new-pane')!;
     expect(newPaneArgs).toContain('--direction');
     expect(newPaneArgs).toContain('right');
-    expect(newPaneArgs).toContain('--json');
-    // No command arg — just the flags
-    expect(newPaneArgs[newPaneArgs.length - 1]).toBe('--json');
+    expect(newPaneArgs).not.toContain('--surface'); // 1st agent: no --surface
+  });
 
-    // Step 2: send delivers the opencode attach command
-    const sendCalls = commands().filter((c) => c[1] === 'send');
-    expect(sendCalls).toHaveLength(1);
-    const sendArgs = sendCalls[0];
-    expect(sendArgs).toContain('--surface');
-    expect(sendArgs).toContain('surface:5');
-    const sentCmd = sendArgs[sendArgs.length - 1] as string;
-    expect(sentCmd).toContain('opencode attach');
-    expect(sentCmd).toContain('session-abc');
-    expect(sentCmd).toContain('http://localhost:4096');
-    expect(sentCmd).toEndWith('\n');
+  test('2nd agent: splits from previous agent surface with nested direction', async () => {
+    const { CmuxMultiplexer } = await importFreshCmux();
+    const cmux = new CmuxMultiplexer('main-vertical', 60);
+    await cmux.isAvailable();
+
+    // 1st agent (warm up cascade)
+    await cmux.spawnPane(
+      'session-1',
+      'agent-1',
+      'http://localhost:4096',
+      '/repo',
+    );
+
+    crossSpawnMock.mockClear(); // clear to see only 2nd agent's calls
+
+    // 2nd agent
+    const result = await cmux.spawnPane(
+      'session-2',
+      'agent-2',
+      'http://localhost:4096',
+      '/repo',
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.paneId).toBe('surface:6');
+
+    const newPaneArgs = commands().find((c) => c[1] === 'new-pane')!;
+    // 2nd agent should use --surface + nested direction
+    expect(newPaneArgs).toContain('--surface');
+    expect(newPaneArgs).toContain('surface:5'); // previous agent's ref
+    expect(newPaneArgs).toContain('down'); // main-vertical nested = down
+  });
+
+  test('main-horizontal: 1st down, 2nd nested right', async () => {
+    const { CmuxMultiplexer } = await importFreshCmux();
+    const cmux = new CmuxMultiplexer('main-horizontal', 60);
+    await cmux.isAvailable();
+
+    // 1st agent
+    await cmux.spawnPane(
+      'session-1',
+      'agent-1',
+      'http://localhost:4096',
+      '/repo',
+    );
+
+    let paneArgs = commands().find((c) => c[1] === 'new-pane')!;
+    expect(paneArgs).toContain('down'); // first direction
+    expect(paneArgs).not.toContain('--surface');
+
+    crossSpawnMock.mockClear();
+
+    // 2nd agent
+    await cmux.spawnPane(
+      'session-2',
+      'agent-2',
+      'http://localhost:4096',
+      '/repo',
+    );
+
+    paneArgs = commands().find((c) => c[1] === 'new-pane')!;
+    expect(paneArgs).toContain('--surface');
+    expect(paneArgs).toContain('right'); // nested direction
+  });
+
+  test('closePane clears lastSurfaceRef so next spawn is first agent again', async () => {
+    const { CmuxMultiplexer } = await importFreshCmux();
+    const cmux = new CmuxMultiplexer('main-vertical', 60);
+    await cmux.isAvailable();
+
+    await cmux.spawnPane(
+      'session-1',
+      'agent-1',
+      'http://localhost:4096',
+      '/repo',
+    );
+    await cmux.closePane('surface:5'); // close the last agent
+
+    crossSpawnMock.mockClear();
+
+    // Next spawn should be 1st agent again (no --surface)
+    await cmux.spawnPane(
+      'session-2',
+      'agent-2',
+      'http://localhost:4096',
+      '/repo',
+    );
+
+    const newPaneArgs = commands().find((c) => c[1] === 'new-pane')!;
+    expect(newPaneArgs).not.toContain('--surface');
   });
 
   test('returns failure when binary not available', async () => {
