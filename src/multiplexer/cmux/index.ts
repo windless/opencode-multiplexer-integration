@@ -21,10 +21,12 @@ export class CmuxMultiplexer implements Multiplexer {
   private binaryPath: string | null = null;
   private hasChecked = false;
   private storedLayout: MultiplexerLayout;
+  private workspaceId: string | undefined;
   private lastAgent: { surfaceRef: string; paneRef: string } | null = null;
 
   constructor(layout: MultiplexerLayout = 'main-vertical', mainPaneSize = 60) {
     this.storedLayout = layout;
+    this.workspaceId = process.env.CMUX_WORKSPACE_ID;
     void mainPaneSize;
   }
 
@@ -64,7 +66,7 @@ export class CmuxMultiplexer implements Multiplexer {
           paneRef: this.lastAgent.paneRef,
         });
         const focusProc = crossSpawn(
-          [cmuxBin, 'focus-pane', '--pane', this.lastAgent.paneRef],
+          [cmuxBin, ...this.workspaceArgs(), 'focus-pane', '--pane', this.lastAgent.paneRef],
           { stdout: 'pipe', stderr: 'pipe' },
         );
         const focusExitCode = await focusProc.exited;
@@ -76,7 +78,7 @@ export class CmuxMultiplexer implements Multiplexer {
       }
 
       // Build create args — new-pane splits from the currently focused pane
-      const createArgs = ['new-pane', '--json'];
+      const createArgs = [...this.workspaceArgs(), 'new-pane', '--json'];
       createArgs.push(
         '--direction',
         this.lastAgent
@@ -153,7 +155,7 @@ export class CmuxMultiplexer implements Multiplexer {
       });
 
       const sendProc = crossSpawn(
-        [cmuxBin, 'send', '--surface', surfaceRef, `${opencodeCmd}\n`],
+        [cmuxBin, ...this.workspaceArgs(), 'send', '--surface', surfaceRef, `${opencodeCmd}\n`],
         { stdout: 'pipe', stderr: 'pipe' },
       );
 
@@ -195,7 +197,7 @@ export class CmuxMultiplexer implements Multiplexer {
       // Send Ctrl+C (ETX byte) — raw \u0003, same approach as ZellijMultiplexer
       log('[cmux] closePane: sending Ctrl+C', { paneId });
       const ctrlCProc = crossSpawn(
-        [cmuxBin, 'send', '--surface', paneId, '\u0003'],
+        [cmuxBin, ...this.workspaceArgs(), 'send', '--surface', paneId, '\u0003'],
         { stdout: 'pipe', stderr: 'pipe' },
       );
       await ctrlCProc.exited;
@@ -203,10 +205,10 @@ export class CmuxMultiplexer implements Multiplexer {
       await new Promise((r) => setTimeout(r, 250));
 
       log('[cmux] closePane: closing surface', { paneId });
-      const proc = crossSpawn([cmuxBin, 'close-surface', '--surface', paneId], {
-        stdout: 'pipe',
-        stderr: 'pipe',
-      });
+      const proc = crossSpawn(
+        [cmuxBin, ...this.workspaceArgs(), 'close-surface', '--surface', paneId],
+        { stdout: 'pipe', stderr: 'pipe' },
+      );
 
       const exitCode = await proc.exited;
       const stderr = await proc.stderr();
@@ -272,6 +274,11 @@ export class CmuxMultiplexer implements Multiplexer {
   private async getBinary(): Promise<string | null> {
     await this.isAvailable();
     return this.binaryPath;
+  }
+
+  /** Build --workspace args when running inside a known cmux workspace. */
+  private workspaceArgs(): string[] {
+    return this.workspaceId ? ['--workspace', this.workspaceId] : [];
   }
 }
 

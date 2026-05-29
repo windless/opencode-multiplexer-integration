@@ -103,7 +103,7 @@ describe('CmuxMultiplexer — spawnPane', () => {
     crossSpawnMock.mockImplementation((command: string[]) => {
       if (command[0] === 'which')
         return createSpawnResult(0, '/usr/local/bin/cmux\n');
-      if (command[1] === 'new-pane') {
+      if (command.includes('new-pane')) {
         const ref = `surface:${surfaceCounter++}`;
         return createSpawnResult(
           0,
@@ -133,7 +133,7 @@ describe('CmuxMultiplexer — spawnPane', () => {
     expect(result.success).toBe(true);
     expect(result.paneId).toBe('surface:5');
 
-    const newPaneArgs = commands().find((c) => c[1] === 'new-pane')!;
+    const newPaneArgs = commands().find((c) => c.includes('new-pane'))!;
     expect(newPaneArgs).toContain('--direction');
     expect(newPaneArgs).toContain('right');
     expect(newPaneArgs).not.toContain('--surface'); // 1st agent: no --surface
@@ -166,13 +166,13 @@ describe('CmuxMultiplexer — spawnPane', () => {
     expect(result.paneId).toBe('surface:6');
 
     // 2nd agent should focus the previous agent's pane first
-    const focusArgs = commands().find((c) => c[1] === 'focus-pane')!;
+    const focusArgs = commands().find((c) => c.includes('focus-pane'))!;
     expect(focusArgs).toBeDefined();
     expect(focusArgs).toContain('--pane');
     expect(focusArgs).toContain('pane:3'); // previous agent's pane_ref
 
     // Then new-pane splits within that pane (no --surface)
-    const newPaneArgs = commands().find((c) => c[1] === 'new-pane')!;
+    const newPaneArgs = commands().find((c) => c.includes('new-pane'))!;
     expect(newPaneArgs).toContain('--direction');
     expect(newPaneArgs).toContain('down'); // main-vertical nested = down
     expect(newPaneArgs).not.toContain('--surface');
@@ -191,7 +191,7 @@ describe('CmuxMultiplexer — spawnPane', () => {
       '/repo',
     );
 
-    let paneArgs = commands().find((c) => c[1] === 'new-pane')!;
+    let paneArgs = commands().find((c) => c.includes('new-pane'))!;
     expect(paneArgs).toContain('down'); // first direction
     expect(paneArgs).not.toContain('--surface');
 
@@ -206,10 +206,10 @@ describe('CmuxMultiplexer — spawnPane', () => {
     );
 
     // 2nd agent focuses previous pane first
-    const focusArgs = commands().find((c) => c[1] === 'focus-pane')!;
+    const focusArgs = commands().find((c) => c.includes('focus-pane'))!;
     expect(focusArgs).toBeDefined();
 
-    paneArgs = commands().find((c) => c[1] === 'new-pane')!;
+    paneArgs = commands().find((c) => c.includes('new-pane'))!;
     expect(paneArgs).toContain('right'); // nested direction
     expect(paneArgs).not.toContain('--surface');
   });
@@ -237,7 +237,7 @@ describe('CmuxMultiplexer — spawnPane', () => {
       '/repo',
     );
 
-    const newPaneArgs = commands().find((c) => c[1] === 'new-pane')!;
+    const newPaneArgs = commands().find((c) => c.includes('new-pane'))!;
     expect(newPaneArgs).not.toContain('--surface');
   });
 
@@ -255,7 +255,7 @@ describe('CmuxMultiplexer — spawnPane', () => {
     crossSpawnMock.mockImplementation((command: string[]) => {
       if (command[0] === 'which')
         return createSpawnResult(0, '/usr/local/bin/cmux\n');
-      if (command[1] === 'new-pane')
+      if (command.includes('new-pane'))
         return createSpawnResult(1, '', 'creation failed');
       return createSpawnResult();
     });
@@ -270,7 +270,7 @@ describe('CmuxMultiplexer — spawnPane', () => {
     crossSpawnMock.mockImplementation((command: string[]) => {
       if (command[0] === 'which')
         return createSpawnResult(0, '/usr/local/bin/cmux\n');
-      if (command[1] === 'new-pane')
+      if (command.includes('new-pane'))
         return createSpawnResult(0, JSON.stringify({ pane_ref: 'pane:3' }));
       return createSpawnResult();
     });
@@ -305,7 +305,7 @@ describe('CmuxMultiplexer — closePane', () => {
 
     const allCalls = commands();
 
-    const sendCalls = allCalls.filter((c) => c[1] === 'send');
+    const sendCalls = allCalls.filter((c) => c.includes('send'));
     expect(sendCalls).toHaveLength(1);
     const sendArgs = sendCalls[0];
     expect(sendArgs).toContain('--surface');
@@ -313,7 +313,7 @@ describe('CmuxMultiplexer — closePane', () => {
     // Should send raw ETX byte \u0003 (Ctrl+C)
     expect(sendArgs[sendArgs.length - 1]).toBe('\u0003');
 
-    const closeCalls = allCalls.filter((c) => c[1] === 'close-surface');
+    const closeCalls = allCalls.filter((c) => c.includes('close-surface'));
     expect(closeCalls).toHaveLength(1);
     expect(closeCalls[0]).toContain('--surface');
     expect(closeCalls[0]).toContain('surface:5');
@@ -330,8 +330,8 @@ describe('CmuxMultiplexer — closePane', () => {
     crossSpawnMock.mockImplementation((command: string[]) => {
       if (command[0] === 'which')
         return createSpawnResult(0, '/usr/local/bin/cmux\n');
-      if (command[1] === 'send') return createSpawnResult(0, '', '');
-      if (command[1] === 'close-surface')
+      if (command.includes('send')) return createSpawnResult(0, '', '');
+      if (command.includes('close-surface'))
         return createSpawnResult(1, '', 'no such surface');
       return createSpawnResult();
     });
